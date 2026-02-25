@@ -5,138 +5,127 @@ from scipy.stats import poisson
 import time
 
 # --- 1. 专家级 UI 配置 ---
-st.set_page_config(
-    page_title="足球进球 AI 实时预测 - 博彩专家版",
-    page_icon="⚽",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="博彩专家-精准追踪系统", page_icon="🎯", layout="wide")
 
-# 自定义 CSS 样式：美化表格和卡片
+# 自定义样式
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; }
-    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #4a4e69; }
-    .status-box { padding: 10px; border-radius: 5px; margin-bottom: 10px; }
-    .ev-high { color: #00ff00; font-weight: bold; }
-    .ev-low { color: #ff4b4b; }
+    .stCheckbox { background-color: #1e2130; padding: 10px; border-radius: 5px; margin: 2px 0; }
+    .reportview-container { background: #0e1117; }
+    .predict-card { border: 2px solid #4a4e69; padding: 20px; border-radius: 15px; background: #161b22; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 核心数学逻辑 ---
-def calculate_ev(minute, h_da, a_da, h_sot, a_sot, odds):
+# --- 2. 核心数学模型 ---
+def calculate_metrics(minute, h_da, a_da, h_sot, a_sot, odds):
     if minute >= 90: return 0.0, 0.0
-    time_rem_ratio = max(0.01, (95 - minute) / 95)
-    # 专家权重逻辑
-    lambda_rem = ((h_da + a_da) * 0.052 + (h_sot + a_sot) * 0.14) * time_rem_ratio
-    prob = (1 - poisson.pmf(0, lambda_rem)) * 100
+    time_rem = max(0.01, (95 - minute) / 95)
+    # 专家权重公式：DA权重0.05，SOT权重0.15
+    lambda_val = ((h_da + a_da) * 0.055 + (h_sot + a_sot) * 0.145) * time_rem
+    prob = (1 - poisson.pmf(0, lambda_val)) * 100
     ev = (prob / 100 * odds) - 1 if odds > 0 else 0
-    return round(prob, 2), round(ev, 2)
+    return round(prob, 2), round(ev, 2), round(lambda_val, 3)
 
 # --- 3. 侧边栏设置 ---
 with st.sidebar:
-    st.image("https://img.icons8.com", width=80)
-    st.header("⚙️ 监控中心")
-    api_key = st.text_input("RapidAPI Key", type="password", help="从 RapidAPI 获取的 API-Football 密钥")
-    
+    st.header("🔑 接入设置")
+    api_key = st.text_input("RapidAPI Key", type="password")
     st.markdown("---")
-    st.subheader("🎯 投资参数")
-    target_odds = st.slider("目标实时赔率", 1.2, 3.5, 1.85, 0.05)
-    min_ev = st.slider("最小盈利标准 (EV)", 0.0, 0.5, 0.15, 0.01)
-    
-    st.markdown("---")
-    st.write("🔄 **自动刷新**：Streamlit 默认交互即刷新")
-    if st.button("🚀 强制刷新数据"):
-        st.rerun()
+    st.subheader("📊 赔率参考")
+    ref_odds = st.number_input("即时赔率 (例如大0.5)", value=1.85, step=0.05)
+    st.info("提示：勾选下方的比赛进入『深度监控区』")
 
-# --- 4. 主界面布局 ---
-st.title("📊 足球下半场进球 AI 实时价值监控")
-
-# 顶部状态栏
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.info("📡 **系统状态**：正在监控全球实时赛事")
-with c2:
-    st.success(f"📈 **当前标准**：EV > {min_ev}")
-with c3:
-    st.metric("目标赔率基准", f"{target_odds}")
-
-# --- 5. 数据抓取与展示 ---
-if not api_key:
-    st.warning("👈 请先在左侧侧边栏填入您的 API Key 以启动实时数据。")
-else:
-    headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
-    
+# --- 4. 数据抓取逻辑 ---
+@st.cache_data(ttl=60)
+def get_all_live_fixtures(key):
+    if not key: return []
+    url = "https://api-football-v1.p.rapidapi.com"
+    headers = {"X-RapidAPI-Key": key, "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
     try:
-        res = requests.get("https://api-football-v1.p.rapidapi.com", 
-                           headers=headers, params={"live": "all"}, timeout=15)
-        data = res.json().get('response', [])
+        res = requests.get(url, headers=headers, params={"live": "all"}, timeout=10)
+        return res.json().get('response', [])
+    except:
+        return []
 
-        if not data:
-            st.info("🕒 当前暂无正在进行的比赛。")
+# --- 5. 主界面布局 ---
+st.title("🎯 精准追踪：手动筛选预测模式")
+
+if not api_key:
+    st.warning("👈 请先在左侧输入 API Key。")
+else:
+    live_games = get_all_live_fixtures(api_key)
+    
+    if not live_games:
+        st.info("📡 正在搜索实时比赛... 若长时间无数据请检查 Key 或当前是否有球赛。")
+    else:
+        # 第一部分：比赛勾选池
+        st.subheader("第一步：从实时比赛池中勾选目标 (下半场场次)")
+        
+        selected_fixtures = []
+        
+        # 建立网格展示勾选框
+        cols = st.columns(3)
+        for idx, game in enumerate(live_games):
+            elapsed = game['fixture']['status']['elapsed']
+            home = game['teams']['home']['name']
+            away = game['teams']['away']['name']
+            score = f"{game['goals']['home']}-{game['goals']['away']}"
+            
+            # 仅显示 40 分钟后的比赛方便筛选
+            if elapsed >= 40:
+                label = f"{elapsed}' | {home} {score} {away}"
+                with cols[idx % 3]:
+                    if st.checkbox(label, key=f"check_{game['fixture']['id']}"):
+                        selected_fixtures.append(game)
+
+        st.markdown("---")
+
+        # 第二部分：深度预测区
+        st.subheader("第二步：已选比赛实时预测 (AI 分析中)")
+        
+        if not selected_fixtures:
+            st.write("⬆️ 请在上方勾选您想要预测的比赛。")
         else:
-            high_val_games = []
-            all_games = []
+            for game in selected_fixtures:
+                with st.container():
+                    # 提取统计数据
+                    stats_list = game.get('statistics', [])
+                    h_da, a_da, h_sot, a_sot = 0, 0, 0, 0
+                    if stats_list:
+                        # 简单提取逻辑 (API数据结构映射)
+                        for team_stat in stats_list:
+                            s_dict = {s['type']: s['value'] for s in team_stat['statistics']}
+                            if team_stat['team']['name'] == game['teams']['home']['name']:
+                                h_da = s_dict.get('Dangerous Attacks', 0) or 0
+                                h_sot = s_dict.get('Shots on Target', 0) or 0
+                            else:
+                                a_da = s_dict.get('Dangerous Attacks', 0) or 0
+                                a_sot = s_dict.get('Shots on Target', 0) or 0
 
-            for match in data:
-                elapsed = match['fixture']['status']['elapsed']
-                # 核心筛选范围：45-88 分钟
-                if 45 <= elapsed <= 88:
-                    stats_list = match.get('statistics', [])
-                    if not stats_list: continue
+                    elapsed = game['fixture']['status']['elapsed']
+                    prob, ev, lam = calculate_metrics(elapsed, h_da, a_da, h_sot, a_sot, ref_odds)
+
+                    # UI 展示卡片
+                    st.markdown(f"""
+                    <div class="predict-card">
+                        <table style="width:100%">
+                            <tr>
+                                <td style="width:40%"><h3>{game['teams']['home']['name']} vs {game['teams']['away']['name']}</h3></td>
+                                <td style="text-align:center"><h4>比分: {game['goals']['home']}-{game['goals']['away']} | 时间: {elapsed}'</h4></td>
+                                <td style="text-align:right"><h2 style="color:{'#00ff00' if ev > 0.1 else '#ffffff'}">{prob}% 进球率</h2></td>
+                            </tr>
+                        </table>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
-                    # 提取统计
-                    stats_map = {}
-                    for team_stat in stats_list:
-                        for s in team_stat['statistics']:
-                            stats_map[s['type']] = stats_map.get(s['type'], 0) + (s['value'] or 0)
-                    
-                    da = stats_map.get('Dangerous Attacks', 0)
-                    sot = stats_map.get('Shots on Target', 0)
-                    prob, ev = calculate_ev(elapsed, da, 0, sot, 0, target_odds)
-                    
-                    game_info = {
-                        "Time": f"{elapsed}'",
-                        "Match": f"{match['teams']['home']['name']} vs {match['teams']['away']['name']}",
-                        "Score": f"{match['goals']['home']}-{match['goals']['away']}",
-                        "DA": da,
-                        "SOT": sot,
-                        "Prob": f"{prob}%",
-                        "EV": ev
-                    }
-                    
-                    if ev >= min_ev:
-                        high_val_games.append(game_info)
-                    all_games.append(game_info)
+                    # 指标条
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("危险进攻 (DA)", f"{h_da + a_da}")
+                    c2.metric("射正 (SOT)", f"{h_sot + a_sot}")
+                    c3.metric("期望进球 (λ)", lam)
+                    c4.metric("期望价值 (EV)", ev, delta=f"{int(ev*100)}%", delta_color="normal")
+                    st.markdown("<br>", unsafe_allow_html=True)
 
-            # --- 展示区域 ---
-            st.subheader("🔥 高价值机会 (High Value)")
-            if high_val_games:
-                # 使用卡片展示最高价值的前三场
-                cols = st.columns(len(high_val_games[:3]))
-                for idx, game in enumerate(high_val_games[:3]):
-                    with cols[idx]:
-                        st.markdown(f"""
-                        <div style="background-color:#1e2130; padding:20px; border-radius:10px; border-left: 5px solid #00ff00;">
-                            <h4 style="margin:0;">{game['Match']}</h4>
-                            <p style="color:#aaa;">比分: {game['Score']} | 时间: {game['Time']}</p>
-                            <h2 style="color:#00ff00; margin:5px 0;">{game['Prob']}</h2>
-                            <p style="margin:0;">期望价值 (EV): <b>{game['EV']}</b></p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                
-                st.markdown("---")
-                st.write("📋 **详细筛选列表**")
-                st.table(pd.DataFrame(high_val_games))
-            else:
-                st.info("🔍 正在扫描全球数据，暂未发现符合 EV 标准的入场点...")
+# 底部说明
+st.caption(f"最后刷新: {time.strftime('%H:%M:%S')} | 勾选模式已激活")
 
-            with st.expander("🌐 查看所有进行中的比赛统计"):
-                if all_games:
-                    st.dataframe(pd.DataFrame(all_games), use_container_width=True)
-
-    except Exception as e:
-        st.error(f"❌ 数据请求出错，请检查 API Key 是否有效。")
-
-st.markdown("---")
-st.caption(f"🚀 数据每分钟自动同步 | 当前时间: {time.strftime('%H:%M:%S')} | 博彩专家模型 V2.0")
